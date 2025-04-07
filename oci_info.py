@@ -1,33 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-OCI 정보 조회 스크립트 (인스턴스, LB, NSG, 볼륨, 오브젝트 스토리지)
-
-[기능 요약]
-- 인스턴스 정보 (--instance / -i)
-- 로드 밸런서 (--lb / -l)
-- NSG 인바운드 룰 (--nsg / -s)
-- 볼륨(부팅 볼륨 / 블록 볼륨) (--volume / -v)
-- 오브젝트 스토리지(버킷) (--object / -o)
-
-[옵션 설명]
-1) 어느 것도 지정하지 않으면, 모든 리소스를 조회합니다.
-2) --name (-n) 으로 리소스 이름 필터(부분 일치)
-3) --compartment (-c) 으로 컴파트먼트 이름 필터(부분 일치)
-4) 인스턴스, LB, NSG, 볼륨, 버킷 모두 compartment별로 구분선이 들어가며, 각 리소스별로 별도 테이블로 표시
-
-예시:
-   - python3 oci_info_extended.py                  # 모두 출력
-   - python3 oci_info_extended.py --instance       # 인스턴스만
-   - python3 oci_info_extended.py --lb -nsg        # LB, NSG만
-   - python3 oci_info_extended.py --volume         # 볼륨 정보만
-   - python3 oci_info_extended.py --object         # 오브젝트 스토리지(버킷)만
-   - python3 oci_info_extended.py -v -o            # 볼륨 + 오브젝트 스토리지
-   - python3 oci_info_extended.py -i --name myinst # 인스턴스 중 이름에 'myinst' 포함만
-   - python3 oci_info_extended.py -c dev           # 'dev'가 포함된 컴파트먼트에서만 조회
-"""
-
+import oci.usage_api
+import datetime
 import oci
 import argparse
 from rich.console import Console
@@ -42,26 +17,32 @@ def main():
     parser.add_argument("--nsg", "-s", action="store_true", help="NSG 인바운드 룰만 표시")
     parser.add_argument("--volume", "-v", action="store_true", help="볼륨 정보만 표시 (부팅/블록)")
     parser.add_argument("--object", "-o", action="store_true", help="오브젝트 스토리지(버킷) 정보만 표시")
+    parser.add_argument("--cost", action="store_true", help="비용 정보 표시 (Usage API)")  # --cost-month 예: 2025-03, 2025-02 등
+    parser.add_argument("--cost-month", default=None, help="비용 조회할 연-월 (YYYY-MM). 생략 시 현재 달.")
     parser.add_argument("--name", "-n", default=None, help="이름 필터 (부분 일치)")
     parser.add_argument("--compartment", "-c", default=None, help="컴파트먼트 이름 필터 (부분 일치)")
+    
 
     args = parser.parse_args()
 
     # 어느 것도 지정 안 했다면 => 모두 True
     # (기존: 인스턴스, LB, NSG에만 적용했으나, 볼륨, 오브젝트 스토리지도 추가)
-    if not (args.instance or args.lb or args.nsg or args.volume or args.object):
+    if not (args.instance or args.lb or args.nsg or args.volume or args.object or args.cost):
         show_instance = True
         show_lb = True
         show_nsg = True
         show_volume = True
         show_object = True
+        show_cost = False  # 비용은 명시적으로 --cost일 때만
     else:
         show_instance = args.instance
         show_lb = args.lb
         show_nsg = args.nsg
         show_volume = args.volume
         show_object = args.object
+        show_cost = args.cost
 
+    cost_month_str = args.cost_month  # '2025-03' 같은 형식(미지정 시 현재 달)
     name_filter = args.name.lower() if args.name else None
     compartment_filter = args.compartment.lower() if args.compartment else None
 
@@ -75,6 +56,7 @@ def main():
     block_storage_client = oci.core.BlockstorageClient(config)
     loadbalancer_client = oci.load_balancer.LoadBalancerClient(config)
     object_storage_client = oci.object_storage.ObjectStorageClient(config)
+    usage_client = oci.usage_api.UsageapiClient(config)
 
     tenancy_ocid = config["tenancy"]
 
@@ -634,6 +616,22 @@ def main():
             # 정렬
             object_rows.sort(key=lambda x: (x["compartment_name"].lower(), x["bucket_name"].lower()))
 
+    # --------------------------------------------------------------
+    # 6. 비용 정보
+    # --------------------------------------------------------------
+    cost_rows = {}
+    if show_cost:
+        start_date, end_date = get_date_range(cost_month_str)
+        cost_rows = get_compartment_costs(
+            usage_client=usage_client,
+            tenancy_ocid=tenancy_ocid,
+            start_time=start_date,
+            end_time=end_date,
+            console=console
+        )
+
+
+
     # -------------------------------------------------------------------------
     # 최종 출력
     # -------------------------------------------------------------------------
@@ -839,6 +837,135 @@ def main():
             console.print(obj_table)
         else:
             console.print("(No Buckets Matched)")
+
+
+    if show_cost:
+        print_cost_table(cost_rows, console, start_date, end_date)
+
+
+
+def get_date_range(cost_month_str):
+    """cost_month_str(YYYY-MM) 기반으로 해당 월의 첫날~말일 datetime 범위 리턴.
+       미지정 시 현재 달."""
+    now = datetime.datetime.utcnow()
+    if cost_month_str:
+        # parse 'YYYY-MM'
+        year, month = cost_month_str.split('-')
+        year = int(year)
+        month = int(month)
+        start_date = datetime.datetime(year, month, 1)
+        # 다음 달 1일
+        if month == 12:
+            end_date = datetime.datetime(year + 1, 1, 1)
+        else:
+            end_date = datetime.datetime(year, month + 1, 1)
+    else:
+        # 현재 달 1일~다음 달 1일
+        year = now.year
+        month = now.month
+        start_date = datetime.datetime(year, month, 1)
+        if month == 12:
+            end_date = datetime.datetime(year + 1, 1, 1)
+        else:
+            end_date = datetime.datetime(year, month + 1, 1)
+    return start_date, end_date
+
+
+def get_compartment_costs(usage_client, tenancy_ocid, start_time, end_time, console):
+    """Usage API를 사용해 compartment/service 단위 COST 정보 조회"""
+    from oci.usage_api.models import RequestSummarizedUsagesDetails
+    details = RequestSummarizedUsagesDetails(
+        tenant_id=tenancy_ocid,
+        time_usage_started=start_time,
+        time_usage_ended=end_time,
+        granularity="DAILY",
+        group_by=["compartmentName", "service"], 
+        query_type="COST",
+        compartment_depth=6
+    )
+
+
+    cost_data = {}
+    try:
+        response = usage_client.request_summarized_usages(
+            request_summarized_usages_details=details
+        )
+        items = response.data.items or []
+        for item in items:
+            comp_name = item.compartment_name if item.compartment_name else "(root)"
+            svc_name = item.service if item.service else "(UnknownService)"
+            cost_amount = float(item.computed_amount) if item.computed_amount else 0.0
+
+            if comp_name not in cost_data:
+                cost_data[comp_name] = {}
+            if svc_name not in cost_data[comp_name]:
+                cost_data[comp_name][svc_name] = 0.0
+            cost_data[comp_name][svc_name] += cost_amount
+    except Exception as e:
+        console.print(f"[yellow][WARN][/yellow] Usage API 호출 실패: {e}")
+        return {}
+
+    return cost_data
+
+
+def print_cost_table(cost_rows, console, start_time, end_time):
+    """compartment->service->cost 구조를 테이블로 출력."""
+    console.print(f"\n[bold underline]Cost Info ({start_time.strftime('%Y-%m-%d')} ~ {end_time.strftime('%Y-%m-%d')})[/bold underline]")
+
+    if not cost_rows:
+        console.print("(No Cost Data)")
+        return
+
+    cost_table = Table(show_lines=False, box=box.HEAVY_EDGE)
+    cost_table.add_column("Compartment", style="bold magenta")
+    cost_table.add_column("Service", style="bold cyan")
+    cost_table.add_column("Cost($)", justify="right")
+    cost_table.add_column("Total($)", justify="right")
+
+    account_total = 0
+
+    for comp_name in sorted(cost_rows.keys(), key=lambda x: x.lower()):
+        services = cost_rows[comp_name]
+        comp_total = sum(services.values())
+        if comp_total ==0:
+            continue
+        account_total += comp_total
+        first_row = True
+        # cost_table.add_row(
+        #     f"[yellow][bold]{comp_name} 합계[/bold][yellow]",
+        #     "",
+        #     f"[bold]{comp_total:.2f}[/bold]"
+        # )
+        # cost_table.add_section()
+        for svc_name, cost_val in sorted(services.items(), key=lambda x: x[1], reverse=True):
+            if first_row:
+                cost_table.add_row(
+                    comp_name,
+                    svc_name,
+                    f"{cost_val:.2f}",
+                    f"[yellow][bold]{comp_total:.2f}[/bold][/yellow]"
+                )
+                first_row = False
+            else:
+                if cost_val == 0 :
+                    continue
+                cost_table.add_row(
+                    "",
+                    svc_name,
+                    f"{cost_val:.2f}"
+                    ""
+                )
+        cost_table.add_section()
+    cost_table.add_row(
+        f"[green][bold]총 합계[/bold][green]",
+        "",
+        "",
+        f"[green][bold]{account_total:.2f}[/bold][/green]"
+    )
+    cost_table.add_section()
+
+    console.print(cost_table)
+
 
 
 if __name__ == "__main__":
