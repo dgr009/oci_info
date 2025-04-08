@@ -863,11 +863,13 @@ def get_date_range(cost_month_str):
         # 현재 달 1일~다음 달 1일
         year = now.year
         month = now.month
+        day = now.day + 1
         start_date = datetime.datetime(year, month, 1)
-        if month == 12:
-            end_date = datetime.datetime(year + 1, 1, 1)
-        else:
-            end_date = datetime.datetime(year, month + 1, 1)
+        end_date = datetime.datetime(year, month, day)
+        # if month == 12:
+        #     end_date = datetime.datetime(year + 1, 1, day)
+        # else:
+        #     end_date = datetime.datetime(year, month + 1, 1)
     return start_date, end_date
 
 
@@ -910,7 +912,8 @@ def get_compartment_costs(usage_client, tenancy_ocid, start_time, end_time, cons
 
 def print_cost_table(cost_rows, console, start_time, end_time):
     """compartment->service->cost 구조를 테이블로 출력."""
-    console.print(f"\n[bold underline]Cost Info ({start_time.strftime('%Y-%m-%d')} ~ {end_time.strftime('%Y-%m-%d')})[/bold underline]")
+    end_time = end_time - datetime.timedelta(seconds=1)
+    console.print(f"\n[bold underline]Cost Info ({start_time.strftime('%Y-%m-%d %H:%M')} ~ {end_time.strftime('%Y-%m-%d %H:%M')})[/bold underline]")
 
     if not cost_rows:
         console.print("(No Cost Data)")
