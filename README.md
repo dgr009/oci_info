@@ -27,7 +27,9 @@ OCI 인프라 내 인스턴스, 로드 밸런서, NSG, 볼륨, 오브젝트 스�
   - 스토리지 계층
   - 총 오브젝트 수, 총 용량(GB) 계산
 
-- **Usage API 기반의 비용 분석 기능 제공(`--cost`, `--cost-month`)**
+- **Usage API 기반의 비용 분석 기능 제공(`--cost`, `--cost-start`, `--cost-end`)**
+  - cost-end , cost-start는 디폴트로 현재 달의 1일부터 오늘까지로 지정
+  - 날짜는 YYYY-MM-DD 로 입력
 
 ---
 
@@ -53,7 +55,8 @@ pip install oci rich
 | `--volume`, `-v` | 볼륨 정보만 출력 |
 | `--object`, `-o` | 오브젝트 스토리지(버킷) 정보 출력 |
 | `--cost` | 비용 정보 출력 (Usage API 기반) |
-| `--cost-month YYYY-MM` | 비용 조회 대상 월 지정 |
+| `--cost-start YYYY-MM-DD` | 비용 조회 대상 시작일 |
+| `--cost-end YYYY-MM-DD` | 비용 조회 대상 종료일 |
 | `--name` | 이름 필터 (부분 일치) |
 | `--compartment` | 컴파트먼트 이름 필터 |
 
@@ -82,6 +85,14 @@ python3 oci_info.py -i --name myapp
 
 # 특정 컴파트먼트 이름 포함 필터링
 python3 oci_info.py -c dev
+
+
+# 비용 정보
+python3 oci_info.py --cost
+
+
+# 특정 날짜의 비용 정보
+python3 oci_info.py --cost --cost-start 0000-00-00 --cost-end 0000-00-00
 ```
 
 ---
