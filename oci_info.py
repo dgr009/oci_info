@@ -18,7 +18,8 @@ def main():
     parser.add_argument("--volume", "-v", action="store_true", help="볼륨 정보만 표시 (부팅/블록)")
     parser.add_argument("--object", "-o", action="store_true", help="오브젝트 스토리지(버킷) 정보만 표시")
     parser.add_argument("--cost", action="store_true", help="비용 정보 표시 (Usage API)")  # --cost-month 예: 2025-03, 2025-02 등
-    parser.add_argument("--cost-month", default=None, help="비용 조회할 연-월 (YYYY-MM). 생략 시 현재 달.")
+    parser.add_argument("--cost-start", default=None, help="비용 조회할 연-월 (YYYY-MM). 생략 시 현재 달 1일.")
+    parser.add_argument("--cost-end", default=None, help="비용 조회할 연-월-일 (YYYY-MM). 생략 시 현재 달 ~ 오늘.")
     parser.add_argument("--name", "-n", default=None, help="이름 필터 (부분 일치)")
     parser.add_argument("--compartment", "-c", default=None, help="컴파트먼트 이름 필터 (부분 일치)")
     
@@ -42,7 +43,8 @@ def main():
         show_object = args.object
         show_cost = args.cost
 
-    cost_month_str = args.cost_month  # '2025-03' 같은 형식(미지정 시 현재 달)
+    cost_start_str = args.cost_start  # '2025-03-02' 같은 형식(미지정 시 현재 달의 1일)
+    cost_end_str = args.cost_end  # '2025-03-03' 같은 형식(미지정 시 현재 일)
     name_filter = args.name.lower() if args.name else None
     compartment_filter = args.compartment.lower() if args.compartment else None
 
@@ -621,7 +623,7 @@ def main():
     # --------------------------------------------------------------
     cost_rows = {}
     if show_cost:
-        start_date, end_date = get_date_range(cost_month_str)
+        start_date, end_date = get_date_range(cost_start_str, cost_end_str)
         cost_rows = get_compartment_costs(
             usage_client=usage_client,
             tenancy_ocid=tenancy_ocid,
@@ -844,32 +846,28 @@ def main():
 
 
 
-def get_date_range(cost_month_str):
-    """cost_month_str(YYYY-MM) 기반으로 해당 월의 첫날~말일 datetime 범위 리턴.
-       미지정 시 현재 달."""
-    now = datetime.datetime.utcnow()
-    if cost_month_str:
-        # parse 'YYYY-MM'
-        year, month = cost_month_str.split('-')
-        year = int(year)
-        month = int(month)
-        start_date = datetime.datetime(year, month, 1)
-        # 다음 달 1일
-        if month == 12:
-            end_date = datetime.datetime(year + 1, 1, 1)
+def get_date_range(cost_start_str, cost_end_str):
+    now = datetime.datetime.now()
+    try:
+        if cost_start_str:
+            year, month, day = map(int, cost_start_str.split('-'))
+            start_date = datetime.datetime(year, month, day)
         else:
-            end_date = datetime.datetime(year, month + 1, 1)
-    else:
-        # 현재 달 1일~다음 달 1일
-        year = now.year
-        month = now.month
-        day = now.day + 1
-        start_date = datetime.datetime(year, month, 1)
-        end_date = datetime.datetime(year, month, day)
-        # if month == 12:
-        #     end_date = datetime.datetime(year + 1, 1, day)
-        # else:
-        #     end_date = datetime.datetime(year, month + 1, 1)
+            # 기본값: 현재 달의 1일
+            start_date = datetime.datetime(now.year, now.month, 1)
+
+        if cost_end_str:
+            year, month, day = map(int, cost_end_str.split('-'))
+            end_date = datetime.datetime(year, month, day + 1)
+        else:
+            # 기본값: 오늘 날짜
+            end_date = datetime.datetime(now.year, now.month, now.day + 1)
+    except ValueError:
+        # 날짜 형식이 잘못된 경우 기본값 설정
+        print("[ERROR] 날짜 형식이 잘못되었습니다. 기본값으로 설정합니다.")
+        start_date = datetime.datetime(now.year, now.month, 1)
+        end_date = datetime.datetime(year, month, day + 1)
+
     return start_date, end_date
 
 
